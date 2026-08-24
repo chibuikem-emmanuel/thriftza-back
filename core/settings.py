@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -94,6 +95,18 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core.wsgi.application'
 
 
+
+# For Django 4.2+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
@@ -139,7 +152,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+
+# Add this exact line if missing or update it:
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 
 # Email
