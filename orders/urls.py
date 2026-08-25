@@ -1,8 +1,7 @@
 from django.urls import path
-from .views import BachsWebhookView, CreateCheckoutView, UserOrdersListView
+from .views import OrderCheckoutView, AdminOrderListView
 
 urlpatterns = [
-    path('checkout/', CreateCheckoutView.as_view(), name='orders_checkout'),
-    path('webhook/bachs/', BachsWebhookView.as_view(), name='orders_bachs_webhook'),
-    path('my-orders/', UserOrdersListView.as_view(), name='orders_user_list'),
+    path('checkout/', OrderCheckoutView.as_view(), name='order_checkout'),
+    path('admin/list/', AdminOrderListView.as_view(), name='admin_orders'),
 ]

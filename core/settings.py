@@ -13,6 +13,10 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 from pathlib import Path
 import os
 import dj_database_url
+from datetime import timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,6 +49,9 @@ INSTALLED_APPS = [
 
     # Local apps
     'accounts',
+    'authentication',
+    'payments',
+    'notifications',
     'orders',
 ]
 
@@ -121,6 +128,24 @@ DATABASES = {
     )
 }
 
+
+
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+
+BACHS_SECRET_KEY = os.getenv('BACHS_SECRET_KEY')
+BACHS_BASE_URL = os.getenv('BACHS_BASE_URL', 'https://api.bachs.io/v1')
+TERMII_API_KEY = os.getenv('TERMII_API_KEY')
+TERMII_SENDER_ID = os.getenv('TERMII_SENDER_ID', 'Thriftza')
+TERMII_DEVICE_ID = os.getenv('TERMII_DEVICE_ID', '')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+
+AUTH_USER_MODEL = 'authentication.User'
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
