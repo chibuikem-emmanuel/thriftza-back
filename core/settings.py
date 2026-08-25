@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-zmzf9tgf7k+z$o_cm937anm&$!_u!!el)-dk2@w@_1u&*kl6j=
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -49,10 +49,12 @@ INSTALLED_APPS = [
 
 
 CORS_ALLOWED_ORIGINS = [
+    "https://thriftza.vercel.app",
     "http://localhost:3000",
-    "http://127.0.0.1:3000",
 ]
 
+# Allow credentials if sending authorization headers or cookies
+CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
