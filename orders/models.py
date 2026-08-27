@@ -7,7 +7,7 @@ class Order(models.Model):
         ('PAID', 'Paid'),
         ('FAILED', 'Failed'),
     )
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='orders')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='orders', null=True, blank=True)
     customer_name = models.CharField(max_length=255, blank=True, null=True)
     customer_email = models.EmailField(blank=True, null=True)
     customer_phone = models.CharField(max_length=50, blank=True, null=True)
