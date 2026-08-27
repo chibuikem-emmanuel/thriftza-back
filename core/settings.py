@@ -30,11 +30,31 @@ INSTALLED_APPS = [
     'orders',
 ]
 
+# 2. Allow specific static domains
 CORS_ALLOWED_ORIGINS = [
     "https://thriftza.vercel.app",
     "http://localhost:3000",
 ]
+
+# 3. Allow ANY Vercel preview deployment URL dynamically using Regex
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+]
+
 CORS_ALLOW_CREDENTIALS = True
+
+# 4. Allow standard auth headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
