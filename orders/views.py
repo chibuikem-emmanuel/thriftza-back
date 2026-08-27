@@ -1,84 +1,103 @@
+import uuid
+import requests
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
-import uuid
 from .models import Order, OrderItem
-from .serializers import OrderSerializer, CreateCheckoutSerializer
-from payments.services import initialize_bachs_payment
-from notifications.services import send_whatsapp_notification
 
 class OrderCheckoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = CreateCheckoutSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = request.data
+        items_data = data.get('items', [])
+        
+        if not items_data:
+            return Response({'error': 'No items in order.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        amount = serializer.validated_data['amount']
-        customer_info = serializer.validated_data.get('customer', {})
-        items_data = serializer.validated_data.get('items', [])
+        reference = f"THRIFT-{uuid.uuid4().hex[:8].upper()}"
 
-        customer_name = customer_info.get('full_name') or f"{request.user.first_name} {request.user.last_name}".strip()
-        customer_email = customer_info.get('email') or request.user.email
-        customer_phone = customer_info.get('phone') or getattr(request.user, 'phone_number', '')
-
-        reference = f"THRIFT-{uuid.uuid4().hex[:10].upper()}"
-
-        # Initialize Bachs Payment Gateway
-        payment_res = initialize_bachs_payment(
-            amount=float(amount),
-            reference=reference,
-            email=customer_email
-        )
-
-        checkout_url = (
-            payment_res.get('checkout_url')
-            or payment_res.get('data', {}).get('checkout_url')
-            if isinstance(payment_res, dict) else None
-        )
-
-        # Create main Order record
+        # 1. Create Order Record
         order = Order.objects.create(
-            user=request.user,
-            customer_name=customer_name,
-            customer_email=customer_email,
-            customer_phone=customer_phone,
+            user=request.user if request.user.is_authenticated else None,
+            customer_name=data.get('customer_name'),
+            customer_email=data.get('customer_email'),
+            customer_phone=data.get('customer_phone'),
+            shipping_address=data.get('shipping_address'),
+            city=data.get('city', 'Lagos'),
+            state=data.get('state', 'Lagos State'),
+            total_amount=data.get('total_amount'),
             reference=reference,
-            total_amount=amount,
-            checkout_url=checkout_url,
             status='PENDING'
         )
 
-        # Save order items
         for item in items_data:
             OrderItem.objects.create(
                 order=order,
-                product_name=item.get('title'),
-                unit_price=item.get('price'),
-                quantity=item.get('quantity', 1),
-                size=item.get('size', '')
+                product_id=item['product_id'],
+                quantity=item['quantity'],
+                price=item['price']
             )
 
-        # WhatsApp Notification
-        phone_to_notify = customer_phone or getattr(request.user, 'phone_number', None)
-        if phone_to_notify:
-            msg = f"Order {reference} generated for ₦{float(amount):,.2f}. Complete payment to process."
-            try:
-                send_whatsapp_notification(phone_to_notify, msg)
-            except Exception as e:
-                print(f"WhatsApp notification failed: {e}")
+        # 2. Call Bachs Checkout API
+        headers = {
+            "Authorization": f"Bearer {settings.BACHS_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        callback_url = f"{settings.FRONTEND_URL}/checkout/verify"
 
-        return Response({
-            "order": OrderSerializer(order).data,
-            "payment": payment_res,
-            "checkout_url": checkout_url
-        }, status=status.HTTP_201_CREATED)
+        payload = {
+            "amount": int(float(data.get('total_amount')) * 100),  # Amount in kobo
+            "email": data.get('customer_email'),
+            "reference": reference,
+            "callback_url": callback_url,
+            "metadata": {
+                "customer_name": data.get('customer_name'),
+                "customer_phone": data.get('customer_phone')
+            }
+        }
+
+        try:
+            bachs_response = requests.post(
+                f"{settings.BACHS_BASE_URL}/checkouts",
+                json=payload,
+                headers=headers,
+                timeout=15
+            )
+            res_data = bachs_response.json()
+
+            if bachs_response.status_code in [200, 201] and res_data.get('status') is True:
+                checkout_url = res_data['data']['checkout_url']
+                return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
+            else:
+                order.status = 'FAILED'
+                order.save()
+                return Response({'error': res_data.get('message', 'Failed to initialize payment gateway')}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            order.status = 'FAILED'
+            order.save()
+            return Response({'error': f"Connection to payment gateway failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AdminOrderListView(APIView):
+    """View for listing all orders in admin dashboard."""
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
         orders = Order.objects.all().order_by('-created_at')
-        return Response(OrderSerializer(orders, many=True).data)
+        data = []
+        for order in orders:
+            data.append({
+                'id': order.id,
+                'reference': order.reference,
+                'customer_name': order.customer_name,
+                'customer_email': order.customer_email,
+                'customer_phone': order.customer_phone,
+                'total_amount': str(order.total_amount),
+                'status': order.status,
+                'created_at': order.created_at.isoformat(),
+            })
+        return Response(data, status=status.HTTP_200_OK)
