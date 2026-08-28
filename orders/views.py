@@ -55,8 +55,12 @@ class OrderCheckoutView(APIView):
 
             # 3. Call Bachs Checkout API
             secret_key = getattr(settings, 'BACHS_SECRET_KEY', None)
-            base_url = getattr(settings, 'BACHS_BASE_URL', '')
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+            base_url = (getattr(settings, 'BACHS_BASE_URL', '') or 'https://api.bachs.io/v1').rstrip('/')
+            frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:3000').rstrip('/')
+
+            # Ensure schema is present if user enters a domain without https://
+            if not base_url.startswith(('http://', 'https://')):
+                base_url = f"https://{base_url}"
 
             headers = {
                 "Authorization": f"Bearer {secret_key}",
@@ -79,8 +83,11 @@ class OrderCheckoutView(APIView):
                 }
             }
 
+            # If base_url already contains checkout endpoint path, call it directly; otherwise append /checkout-sessions
+            checkout_endpoint = base_url if "checkout" in base_url else f"{base_url}/checkout-sessions"
+
             bachs_response = requests.post(
-                f"{base_url}/checkouts",
+                checkout_endpoint,
                 json=payload,
                 headers=headers,
                 timeout=15
