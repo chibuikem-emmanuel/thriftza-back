@@ -21,7 +21,7 @@ class OrderCheckoutView(APIView):
 
         try:
             with transaction.atomic():
-                # 1. Create Order Record matching Order model fields
+                # 1. Create Order Record
                 order = Order.objects.create(
                     user=request.user if request.user.is_authenticated else None,
                     customer_name=data.get('customer_name'),
@@ -32,12 +32,11 @@ class OrderCheckoutView(APIView):
                     status='PENDING'
                 )
 
-                # Extract shipping details from request body
                 shipping_address = data.get('shipping_address')
                 city = data.get('city', 'Lagos')
                 state = data.get('state', 'Lagos State')
 
-                # 2. Create Order Items matching OrderItem model fields
+                # 2. Create Order Items
                 for item in items_data:
                     product_name = item.get('product_name') or item.get('name') or item.get('title') or f"Product {item.get('id', '')}"
                     unit_price = item.get('unit_price') or item.get('price', 0)
@@ -58,7 +57,6 @@ class OrderCheckoutView(APIView):
             base_url = (getattr(settings, 'BACHS_BASE_URL', '') or 'https://api.bachs.io/v1').rstrip('/')
             frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:3000').rstrip('/')
 
-            # Ensure schema is present if base URL is missing http/https prefix
             if not base_url.startswith(('http://', 'https://')):
                 base_url = f"https://{base_url}"
 
@@ -69,12 +67,11 @@ class OrderCheckoutView(APIView):
             
             callback_url = f"{frontend_url}/checkout/verify"
 
-            # Format total amount to 2 decimal places as a string (e.g., "1500.00")
             raw_amount = float(data.get('total_amount', 0))
-            formatted_amount = f"{raw_amount:.2f}"
 
+            # Standard Bachs Checkout Payload
             payload = {
-                "amount": formatted_amount,
+                "amount": raw_amount,
                 "currency": "NGN",
                 "email": data.get('customer_email'),
                 "reference": reference,
@@ -88,7 +85,6 @@ class OrderCheckoutView(APIView):
                 }
             }
 
-            # Handle base URL containing or omitting explicit endpoint paths
             checkout_endpoint = base_url if "checkout" in base_url else f"{base_url}/checkout-sessions"
 
             bachs_response = requests.post(
@@ -98,22 +94,28 @@ class OrderCheckoutView(APIView):
                 timeout=15
             )
 
+            # Diagnostic logging
+            print(f"--- BACHS GATEWAY RESPONSE ---")
+            print(f"Status Code: {bachs_response.status_code}")
+            print(f"Response Body: {bachs_response.text}")
+            print(f"------------------------------")
+
             res_data = {}
             try:
                 res_data = bachs_response.json()
             except Exception:
                 res_data = {'message': bachs_response.text or 'Invalid server response'}
 
-            if bachs_response.status_code in [200, 201] and (res_data.get('status') is True or 'checkout_url' in res_data.get('data', {}) or 'checkout_url' in res_data):
-                checkout_url = res_data.get('data', {}).get('checkout_url') or res_data.get('checkout_url')
+            if bachs_response.status_code in [200, 201] and (res_data.get('status') is True or 'checkout_url' in res_data.get('data', {}) or 'checkout_url' in res_data or 'url' in res_data):
+                checkout_url = res_data.get('data', {}).get('checkout_url') or res_data.get('checkout_url') or res_data.get('url')
                 order.checkout_url = checkout_url
                 order.save(update_fields=['checkout_url'])
                 return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
             else:
                 order.status = 'FAILED'
                 order.save(update_fields=['status'])
-                error_message = res_data.get('message') or res_data.get('error') or 'Failed to initialize payment gateway'
-                return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+                error_msg = res_data.get('message') or res_data.get('error') or res_data
+                return Response({'error': f"Gateway error ({bachs_response.status_code}): {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             if 'order' in locals():
