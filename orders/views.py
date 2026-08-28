@@ -21,40 +21,36 @@ class OrderCheckoutView(APIView):
 
         try:
             with transaction.atomic():
-                # Build fields dynamically based on model attributes to prevent kwarg errors
-                order_kwargs = {
-                    'user': request.user if request.user.is_authenticated else None,
-                    'customer_name': data.get('customer_name'),
-                    'customer_email': data.get('customer_email'),
-                    'customer_phone': data.get('customer_phone'),
-                    'total_amount': data.get('total_amount'),
-                    'reference': reference,
-                    'status': 'PENDING'
-                }
+                # 1. Create Order Record matching Order model fields
+                order = Order.objects.create(
+                    user=request.user if request.user.is_authenticated else None,
+                    customer_name=data.get('customer_name'),
+                    customer_email=data.get('customer_email'),
+                    customer_phone=data.get('customer_phone'),
+                    total_amount=data.get('total_amount'),
+                    reference=reference,
+                    status='PENDING'
+                )
 
-                # Optional location fields (only assigned if model defines them)
-                if hasattr(Order, 'shipping_address'):
-                    order_kwargs['shipping_address'] = data.get('shipping_address')
-                elif hasattr(Order, 'address'):
-                    # Fallback if your model uses 'address' instead
-                    full_address = f"{data.get('shipping_address', '')}, {data.get('city', '')}, {data.get('state', '')}".strip(", ")
-                    order_kwargs['address'] = full_address
+                # Extract shipping details from request body
+                shipping_address = data.get('shipping_address')
+                city = data.get('city', 'Lagos')
+                state = data.get('state', 'Lagos State')
 
-                if hasattr(Order, 'city'):
-                    order_kwargs['city'] = data.get('city', 'Lagos')
-                if hasattr(Order, 'state'):
-                    order_kwargs['state'] = data.get('state', 'Lagos State')
-
-                # 1. Create Order Record
-                order = Order.objects.create(**order_kwargs)
-
-                # 2. Create Order Items
+                # 2. Create Order Items matching OrderItem model fields
                 for item in items_data:
+                    product_name = item.get('product_name') or item.get('name') or item.get('title') or f"Product {item.get('id', '')}"
+                    unit_price = item.get('unit_price') or item.get('price', 0)
+
                     OrderItem.objects.create(
                         order=order,
-                        product_id=item.get('product_id') or item.get('id'),
+                        product_name=product_name,
+                        unit_price=unit_price,
                         quantity=item.get('quantity', 1),
-                        price=item.get('price', 0)
+                        size=item.get('size'),
+                        shipping_address=shipping_address,
+                        city=city,
+                        state=state
                     )
 
             # 3. Call Bachs Checkout API
@@ -77,7 +73,9 @@ class OrderCheckoutView(APIView):
                 "metadata": {
                     "customer_name": data.get('customer_name'),
                     "customer_phone": data.get('customer_phone'),
-                    "shipping_address": data.get('shipping_address'),
+                    "shipping_address": shipping_address,
+                    "city": city,
+                    "state": state
                 }
             }
 
@@ -91,16 +89,18 @@ class OrderCheckoutView(APIView):
 
             if bachs_response.status_code in [200, 201] and (res_data.get('status') is True or 'checkout_url' in res_data.get('data', {})):
                 checkout_url = res_data.get('data', {}).get('checkout_url') or res_data.get('checkout_url')
+                order.checkout_url = checkout_url
+                order.save(update_fields=['checkout_url'])
                 return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
             else:
                 order.status = 'FAILED'
-                order.save()
+                order.save(update_fields=['status'])
                 return Response({'error': res_data.get('message', 'Failed to initialize payment gateway')}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
             if 'order' in locals():
                 order.status = 'FAILED'
-                order.save()
+                order.save(update_fields=['status'])
             return Response({'error': f"Order processing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -115,11 +115,12 @@ class AdminOrderListView(APIView):
             data.append({
                 'id': order.id,
                 'reference': order.reference,
-                'customer_name': getattr(order, 'customer_name', ''),
-                'customer_email': getattr(order, 'customer_email', ''),
-                'customer_phone': getattr(order, 'customer_phone', ''),
+                'customer_name': order.customer_name or '',
+                'customer_email': order.customer_email or '',
+                'customer_phone': order.customer_phone or '',
                 'total_amount': str(order.total_amount),
+                'checkout_url': order.checkout_url,
                 'status': order.status,
-                'created_at': order.created_at.isoformat() if hasattr(order, 'created_at') else None,
+                'created_at': order.created_at.isoformat() if order.created_at else None,
             })
         return Response(data, status=status.HTTP_200_OK)
