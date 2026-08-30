@@ -82,8 +82,9 @@ class OrderCheckoutView(APIView):
             except (ValueError, TypeError):
                 raw_amount = 0.0
 
-            # Bachs API Schema using 'pricing' as the single pricing source
+            # Bachs API Schema requiring root currency alongside pricing
             payload = {
+                "currency": "NGN",
                 "pricing": {
                     "local": {
                         "amount": raw_amount,
