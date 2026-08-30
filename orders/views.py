@@ -82,10 +82,12 @@ class OrderCheckoutView(APIView):
             except (ValueError, TypeError):
                 raw_amount = 0.0
 
-            # Bachs API Schema requiring root currency alongside pricing
+            # Correct Bachs API Fixed Price Payload Structure
             payload = {
-                "currency": "NGN",
                 "pricing": {
+                    "type": "fixed_price",
+                    "currency": "NGN",
+                    "amount": raw_amount,
                     "local": {
                         "amount": raw_amount,
                         "currency": "NGN"
@@ -114,7 +116,7 @@ class OrderCheckoutView(APIView):
                 timeout=15
             )
 
-            # Diagnostic logging
+            # Terminal diagnostic output
             print(f"--- BACHS GATEWAY RESPONSE ---")
             print(f"Status Code: {bachs_response.status_code}")
             print(f"Response Body: {bachs_response.text}")
