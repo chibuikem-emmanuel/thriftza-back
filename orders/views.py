@@ -82,10 +82,14 @@ class OrderCheckoutView(APIView):
             except (ValueError, TypeError):
                 raw_amount = 0.0
 
-            # Payload formatted per Bachs schema (requires nested customer object)
+            # Bachs API Schema using 'pricing' as the single pricing source
             payload = {
-                "amount": raw_amount,
-                "currency": "NGN",
+                "pricing": {
+                    "local": {
+                        "amount": raw_amount,
+                        "currency": "NGN"
+                    }
+                },
                 "reference": reference,
                 "callback_url": callback_url,
                 "customer": {
