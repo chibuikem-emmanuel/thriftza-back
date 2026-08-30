@@ -52,10 +52,19 @@ class OrderCheckoutView(APIView):
                         state=state
                     )
 
-            # 3. Call Bachs Checkout API
-            secret_key = getattr(settings, 'BACHS_SECRET_KEY', None)
-            base_url = (getattr(settings, 'BACHS_BASE_URL', '') or 'https://api.bachs.io/v1').rstrip('/')
-            frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:3000').rstrip('/')
+            # 3. Resolve Bachs API Configuration
+            raw_secret = getattr(settings, 'BACHS_SECRET_KEY', '') or ''
+            secret_key = str(raw_secret).strip().strip("'").strip('"')
+
+            raw_base_url = getattr(settings, 'BACHS_BASE_URL', '') or 'https://api.bachs.io/v1'
+            base_url = str(raw_base_url).strip().rstrip('/')
+
+            # Ensure frontend URL resolution defaults to your Vercel deployment
+            raw_frontend = getattr(settings, 'FRONTEND_URL', '') or 'https://thriftza-f51mbn2os-chibuikem-emmanuels-projects.vercel.app'
+            frontend_url = str(raw_frontend).strip().rstrip('/')
+
+            if not secret_key:
+                return Response({'error': 'BACHS_SECRET_KEY is missing from environment.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             if not base_url.startswith(('http://', 'https://')):
                 base_url = f"https://{base_url}"
@@ -66,10 +75,9 @@ class OrderCheckoutView(APIView):
             }
             
             callback_url = f"{frontend_url}/checkout/verify"
-
             raw_amount = float(data.get('total_amount', 0))
 
-            # Standard Bachs Checkout Payload
+            # Payload formatted per Bachs specifications
             payload = {
                 "amount": raw_amount,
                 "currency": "NGN",
@@ -94,7 +102,7 @@ class OrderCheckoutView(APIView):
                 timeout=15
             )
 
-            # Diagnostic logging
+            # Terminal diagnostic output
             print(f"--- BACHS GATEWAY RESPONSE ---")
             print(f"Status Code: {bachs_response.status_code}")
             print(f"Response Body: {bachs_response.text}")
@@ -106,15 +114,24 @@ class OrderCheckoutView(APIView):
             except Exception:
                 res_data = {'message': bachs_response.text or 'Invalid server response'}
 
-            if bachs_response.status_code in [200, 201] and (res_data.get('status') is True or 'checkout_url' in res_data.get('data', {}) or 'checkout_url' in res_data or 'url' in res_data):
-                checkout_url = res_data.get('data', {}).get('checkout_url') or res_data.get('checkout_url') or res_data.get('url')
+            if bachs_response.status_code in [200, 201] and (
+                res_data.get('status') is True 
+                or 'checkout_url' in res_data.get('data', {}) 
+                or 'checkout_url' in res_data 
+                or 'url' in res_data
+            ):
+                checkout_url = (
+                    res_data.get('data', {}).get('checkout_url') 
+                    or res_data.get('checkout_url') 
+                    or res_data.get('url')
+                )
                 order.checkout_url = checkout_url
                 order.save(update_fields=['checkout_url'])
                 return Response({'checkout_url': checkout_url, 'reference': reference}, status=status.HTTP_201_CREATED)
             else:
                 order.status = 'FAILED'
                 order.save(update_fields=['status'])
-                error_msg = res_data.get('message') or res_data.get('error') or res_data
+                error_msg = res_data.get('detail') or res_data.get('message') or res_data.get('error') or res_data
                 return Response({'error': f"Gateway error ({bachs_response.status_code}): {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
