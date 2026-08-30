@@ -77,19 +77,21 @@ class OrderCheckoutView(APIView):
             
             callback_url = f"{frontend_url}/checkout/verify"
             
+            # Format amount strictly as a string
             try:
-                raw_amount = float(data.get('total_amount', 0))
+                raw_amount_val = float(data.get('total_amount', 0))
+                formatted_amount = f"{raw_amount_val:.2f}"
             except (ValueError, TypeError):
-                raw_amount = 0.0
+                formatted_amount = "0.00"
 
-            # Correct Bachs API Fixed Price Payload Structure
+            # Payload with amounts passed as string types
             payload = {
                 "pricing": {
                     "type": "fixed_price",
                     "currency": "NGN",
-                    "amount": raw_amount,
+                    "amount": formatted_amount,
                     "local": {
-                        "amount": raw_amount,
+                        "amount": formatted_amount,
                         "currency": "NGN"
                     }
                 },
