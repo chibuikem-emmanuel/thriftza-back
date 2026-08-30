@@ -1,3 +1,4 @@
+import traceback
 import uuid
 import requests
 from django.conf import settings
@@ -11,7 +12,7 @@ class OrderCheckoutView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        data = request.data
+        data = request.data or {}
         items_data = data.get('items', [])
         
         if not items_data:
@@ -24,15 +25,15 @@ class OrderCheckoutView(APIView):
                 # 1. Create Order Record
                 order = Order.objects.create(
                     user=request.user if request.user.is_authenticated else None,
-                    customer_name=data.get('customer_name'),
-                    customer_email=data.get('customer_email'),
-                    customer_phone=data.get('customer_phone'),
-                    total_amount=data.get('total_amount'),
+                    customer_name=data.get('customer_name', ''),
+                    customer_email=data.get('customer_email', ''),
+                    customer_phone=data.get('customer_phone', ''),
+                    total_amount=data.get('total_amount', 0),
                     reference=reference,
                     status='PENDING'
                 )
 
-                shipping_address = data.get('shipping_address')
+                shipping_address = data.get('shipping_address', '')
                 city = data.get('city', 'Lagos')
                 state = data.get('state', 'Lagos State')
 
@@ -53,18 +54,18 @@ class OrderCheckoutView(APIView):
                     )
 
             # 3. Resolve Bachs API Configuration
-            raw_secret = getattr(settings, 'BACHS_SECRET_KEY', '') or ''
+            raw_secret = getattr(settings, 'BACHS_SECRET_KEY', None)
+            if not raw_secret:
+                print("ERROR: BACHS_SECRET_KEY is missing or empty in Django settings.")
+                return Response({'error': 'BACHS_SECRET_KEY is missing from environment.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
             secret_key = str(raw_secret).strip().strip("'").strip('"')
 
-            raw_base_url = getattr(settings, 'BACHS_BASE_URL', '') or 'https://api.bachs.io/v1'
+            raw_base_url = getattr(settings, 'BACHS_BASE_URL', None) or 'https://api.bachs.io/v1'
             base_url = str(raw_base_url).strip().rstrip('/')
 
-            # Ensure frontend URL resolution defaults to your Vercel deployment
-            raw_frontend = getattr(settings, 'FRONTEND_URL', '') or 'https://thriftza-f51mbn2os-chibuikem-emmanuels-projects.vercel.app'
+            raw_frontend = getattr(settings, 'FRONTEND_URL', None) or 'https://thriftza-59hct6blk-chibuikem-emmanuels-projects.vercel.app'
             frontend_url = str(raw_frontend).strip().rstrip('/')
-
-            if not secret_key:
-                return Response({'error': 'BACHS_SECRET_KEY is missing from environment.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             if not base_url.startswith(('http://', 'https://')):
                 base_url = f"https://{base_url}"
@@ -75,18 +76,24 @@ class OrderCheckoutView(APIView):
             }
             
             callback_url = f"{frontend_url}/checkout/verify"
-            raw_amount = float(data.get('total_amount', 0))
+            
+            try:
+                raw_amount = float(data.get('total_amount', 0))
+            except (ValueError, TypeError):
+                raw_amount = 0.0
 
-            # Payload formatted per Bachs specifications
+            # Payload formatted per Bachs schema (requires nested customer object)
             payload = {
                 "amount": raw_amount,
                 "currency": "NGN",
-                "email": data.get('customer_email'),
                 "reference": reference,
                 "callback_url": callback_url,
+                "customer": {
+                    "email": data.get('customer_email', ''),
+                    "name": data.get('customer_name', ''),
+                    "phone": data.get('customer_phone', ''),
+                },
                 "metadata": {
-                    "customer_name": data.get('customer_name'),
-                    "customer_phone": data.get('customer_phone'),
                     "shipping_address": shipping_address,
                     "city": city,
                     "state": state
@@ -102,7 +109,7 @@ class OrderCheckoutView(APIView):
                 timeout=15
             )
 
-            # Terminal diagnostic output
+            # Diagnostic logging
             print(f"--- BACHS GATEWAY RESPONSE ---")
             print(f"Status Code: {bachs_response.status_code}")
             print(f"Response Body: {bachs_response.text}")
@@ -135,6 +142,8 @@ class OrderCheckoutView(APIView):
                 return Response({'error': f"Gateway error ({bachs_response.status_code}): {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
+            print("!!! INTERNAL SERVER ERROR EXCEPTION !!!")
+            traceback.print_exc()
             if 'order' in locals():
                 order.status = 'FAILED'
                 order.save(update_fields=['status'])
