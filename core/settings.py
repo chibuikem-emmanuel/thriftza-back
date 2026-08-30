@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import dj_database_url
 from datetime import timedelta
+from decouple import config
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -126,6 +127,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+
+
+BACHS_SECRET_KEY = os.environ.get('BACHS_SECRET_KEY', '')
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
