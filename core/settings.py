@@ -130,7 +130,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 
-BACHS_SECRET_KEY = os.environ.get('BACHS_SECRET_KEY', '')
+BACHS_SECRET_KEY = os.environ.get('BACHS_SECRET_KEY', 'sk_live_786f7d90_dH3mzbsgDtubcB5ZpS0AfgrB29SRK0Yje_R97TwVzE0')
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
