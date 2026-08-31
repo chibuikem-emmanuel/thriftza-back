@@ -3,11 +3,14 @@ import uuid
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .models import Order, OrderItem
 from .utils import send_email_async
+
+User = get_user_model()
 
 
 class OrderCheckoutView(APIView):
@@ -235,10 +238,12 @@ class OrderVerifyView(APIView):
 
 
 class AdminOrderListView(APIView):
-    permission_classes = [permissions.AllowAny]  # Use AllowAny for frontend consumption or change back to permissions.IsAdminUser when JWT/Session Auth headers are sent
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         orders = Order.objects.prefetch_related('items').all().order_by('-created_at')
+        total_users = User.objects.count()
+
         data = []
         for order in orders:
             items_payload = [
@@ -267,4 +272,9 @@ class AdminOrderListView(APIView):
                 'created_at': order.created_at.isoformat() if order.created_at else None,
                 'items': items_payload,
             })
-        return Response(data, status=status.HTTP_200_OK)
+
+        return Response({
+            'total_users': total_users,
+            'total_orders': len(data),
+            'orders': data
+        }, status=status.HTTP_200_OK)
