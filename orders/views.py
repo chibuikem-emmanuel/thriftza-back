@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .models import Order, OrderItem
+from .notifications import send_whatsapp_notification
 
 class OrderCheckoutView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -53,6 +54,24 @@ class OrderCheckoutView(APIView):
                         state=state
                     )
 
+            # Send WhatsApp Notification on Order Creation
+            customer_phone = data.get('customer_phone', '')
+            customer_name = data.get('customer_name', 'Customer')
+            try:
+                raw_amount_val = float(data.get('total_amount', 0))
+                formatted_amount = f"{raw_amount_val:,.2f}"
+            except (ValueError, TypeError):
+                formatted_amount = "0.00"
+
+            if customer_phone:
+                order_msg = (
+                    f"Hello {customer_name},\n\n"
+                    f"Your order {reference} has been placed!\n"
+                    f"Total Amount: NGN {formatted_amount}\n\n"
+                    "Please proceed to complete payment."
+                )
+                send_whatsapp_notification(customer_phone, order_msg)
+
             # 3. Resolve Bachs API Configuration
             raw_secret = getattr(settings, 'BACHS_SECRET_KEY', None)
             if not raw_secret:
@@ -76,22 +95,16 @@ class OrderCheckoutView(APIView):
             }
             
             callback_url = f"{frontend_url}/checkout/verify"
-            
-            # Format amount strictly as a string
-            try:
-                raw_amount_val = float(data.get('total_amount', 0))
-                formatted_amount = f"{raw_amount_val:.2f}"
-            except (ValueError, TypeError):
-                formatted_amount = "0.00"
+            payload_amount = f"{raw_amount_val:.2f}"
 
-            # Payload with amounts passed as string types
+            # Payload formatted as explicit strings for Bachs validation
             payload = {
                 "pricing": {
                     "type": "fixed_price",
                     "currency": "NGN",
-                    "amount": formatted_amount,
+                    "amount": payload_amount,
                     "local": {
-                        "amount": formatted_amount,
+                        "amount": payload_amount,
                         "currency": "NGN"
                     }
                 },
@@ -99,8 +112,8 @@ class OrderCheckoutView(APIView):
                 "callback_url": callback_url,
                 "customer": {
                     "email": data.get('customer_email', ''),
-                    "name": data.get('customer_name', ''),
-                    "phone": data.get('customer_phone', ''),
+                    "name": customer_name,
+                    "phone": customer_phone,
                 },
                 "metadata": {
                     "shipping_address": shipping_address,
@@ -118,7 +131,6 @@ class OrderCheckoutView(APIView):
                 timeout=15
             )
 
-            # Terminal diagnostic output
             print(f"--- BACHS GATEWAY RESPONSE ---")
             print(f"Status Code: {bachs_response.status_code}")
             print(f"Response Body: {bachs_response.text}")
@@ -157,6 +169,32 @@ class OrderCheckoutView(APIView):
                 order.status = 'FAILED'
                 order.save(update_fields=['status'])
             return Response({'error': f"Order processing failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class OrderVerifyView(APIView):
+    """Verifies transaction reference and notifies user on successful payment."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, reference):
+        try:
+            order = Order.objects.get(reference=reference)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        order.status = 'SUCCESSFUL'
+        order.save(update_fields=['status'])
+
+        if order.customer_phone:
+            payment_msg = (
+                f"Payment Confirmed!\n\n"
+                f"Hi {order.customer_name or 'Customer'},\n"
+                f"Your payment for Order #{order.reference} was successful.\n"
+                f"Amount Paid: NGN {float(order.total_amount):,.2f}\n\n"
+                "We are processing your delivery."
+            )
+            send_whatsapp_notification(order.customer_phone, payment_msg)
+
+        return Response({'status': 'SUCCESSFUL', 'reference': reference}, status=status.HTTP_200_OK)
 
 
 class AdminOrderListView(APIView):
