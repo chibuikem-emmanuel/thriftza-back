@@ -3,11 +3,11 @@ import uuid
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .models import Order, OrderItem
-from .notifications import send_whatsapp_notification
 
 class OrderCheckoutView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -38,24 +38,36 @@ class OrderCheckoutView(APIView):
                 city = data.get('city', 'Lagos')
                 state = data.get('state', 'Lagos State')
 
+                order_items_html = ""
+
                 # 2. Create Order Items
                 for item in items_data:
                     product_name = item.get('product_name') or item.get('name') or item.get('title') or f"Product {item.get('id', '')}"
                     unit_price = item.get('unit_price') or item.get('price', 0)
+                    quantity = item.get('quantity', 1)
+                    size = item.get('size', 'N/A')
 
                     OrderItem.objects.create(
                         order=order,
                         product_name=product_name,
                         unit_price=unit_price,
-                        quantity=item.get('quantity', 1),
-                        size=item.get('size'),
+                        quantity=quantity,
+                        size=size,
                         shipping_address=shipping_address,
                         city=city,
                         state=state
                     )
 
-            # Send WhatsApp Notification on Order Creation
-            customer_phone = data.get('customer_phone', '')
+                    order_items_html += f"""
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">{product_name} ({size})</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: center;">{quantity}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">NGN {float(unit_price):,.2f}</td>
+                    </tr>
+                    """
+
+            # 3. Send Order Confirmation Email
+            customer_email = data.get('customer_email', '')
             customer_name = data.get('customer_name', 'Customer')
             try:
                 raw_amount_val = float(data.get('total_amount', 0))
@@ -63,26 +75,63 @@ class OrderCheckoutView(APIView):
             except (ValueError, TypeError):
                 formatted_amount = "0.00"
 
-            if customer_phone:
-                order_msg = (
+            if customer_email:
+                subject = f"Order Received - #{reference}"
+                plain_message = (
                     f"Hello {customer_name},\n\n"
-                    f"Your order {reference} has been placed!\n"
+                    f"Your order #{reference} has been created successfully!\n"
                     f"Total Amount: NGN {formatted_amount}\n\n"
-                    "Please proceed to complete payment."
+                    "Please complete your payment to initiate delivery."
                 )
-                send_whatsapp_notification(customer_phone, order_msg)
 
-            # 3. Resolve Bachs API Configuration
+                html_message = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                    <h2 style="color: #333;">Order Received</h2>
+                    <p>Hi <strong>{customer_name}</strong>,</p>
+                    <p>Thank you for your order! Your reference code is <strong>{reference}</strong>.</p>
+                    
+                    <h3>Order Details</h3>
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                        <thead>
+                            <tr style="background-color: #f8f8f8;">
+                                <th style="padding: 8px; text-align: left;">Item</th>
+                                <th style="padding: 8px; text-align: center;">Qty</th>
+                                <th style="padding: 8px; text-align: right;">Price</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {order_items_html}
+                        </tbody>
+                    </table>
+
+                    <p style="font-size: 16px; text-align: right;"><strong>Total: NGN {formatted_amount}</strong></p>
+                    <p style="color: #666; font-size: 14px;"><strong>Shipping Address:</strong> {shipping_address}, {city}, {state}</p>
+                    
+                    <p style="color: #e53935; font-size: 13px;">Please complete your checkout payment to confirm shipment.</p>
+                </div>
+                """
+
+                try:
+                    send_mail(
+                        subject=subject,
+                        message=plain_message,
+                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
+                        recipient_list=[customer_email],
+                        html_message=html_message,
+                        fail_silently=True
+                    )
+                except Exception as e:
+                    print(f"Failed to send order email: {e}")
+
+            # 4. Resolve Bachs API Configuration
             raw_secret = getattr(settings, 'BACHS_SECRET_KEY', None)
             if not raw_secret:
                 print("ERROR: BACHS_SECRET_KEY is missing or empty in Django settings.")
                 return Response({'error': 'BACHS_SECRET_KEY is missing from environment.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             secret_key = str(raw_secret).strip().strip("'").strip('"')
-
             raw_base_url = getattr(settings, 'BACHS_BASE_URL', None) or 'https://api.bachs.io/v1'
             base_url = str(raw_base_url).strip().rstrip('/')
-
             raw_frontend = getattr(settings, 'FRONTEND_URL', None) or 'https://thriftza-59hct6blk-chibuikem-emmanuels-projects.vercel.app'
             frontend_url = str(raw_frontend).strip().rstrip('/')
 
@@ -97,7 +146,6 @@ class OrderCheckoutView(APIView):
             callback_url = f"{frontend_url}/checkout/verify"
             payload_amount = f"{raw_amount_val:.2f}"
 
-            # Payload formatted as explicit strings for Bachs validation
             payload = {
                 "pricing": {
                     "type": "fixed_price",
@@ -111,9 +159,9 @@ class OrderCheckoutView(APIView):
                 "reference": reference,
                 "callback_url": callback_url,
                 "customer": {
-                    "email": data.get('customer_email', ''),
+                    "email": customer_email,
                     "name": customer_name,
-                    "phone": customer_phone,
+                    "phone": data.get('customer_phone', ''),
                 },
                 "metadata": {
                     "shipping_address": shipping_address,
@@ -130,11 +178,6 @@ class OrderCheckoutView(APIView):
                 headers=headers,
                 timeout=15
             )
-
-            print(f"--- BACHS GATEWAY RESPONSE ---")
-            print(f"Status Code: {bachs_response.status_code}")
-            print(f"Response Body: {bachs_response.text}")
-            print(f"------------------------------")
 
             res_data = {}
             try:
@@ -172,7 +215,7 @@ class OrderCheckoutView(APIView):
 
 
 class OrderVerifyView(APIView):
-    """Verifies transaction reference and notifies user on successful payment."""
+    """Verifies payment and emails payment receipt confirmation."""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, reference):
@@ -184,15 +227,38 @@ class OrderVerifyView(APIView):
         order.status = 'SUCCESSFUL'
         order.save(update_fields=['status'])
 
-        if order.customer_phone:
-            payment_msg = (
-                f"Payment Confirmed!\n\n"
-                f"Hi {order.customer_name or 'Customer'},\n"
-                f"Your payment for Order #{order.reference} was successful.\n"
+        # Send Payment Confirmation Email
+        if order.customer_email:
+            subject = f"Payment Confirmed - Order #{order.reference}"
+            plain_message = (
+                f"Hi {order.customer_name or 'Customer'},\n\n"
+                f"We received your payment for Order #{order.reference}.\n"
                 f"Amount Paid: NGN {float(order.total_amount):,.2f}\n\n"
-                "We are processing your delivery."
+                "We are preparing your items for delivery."
             )
-            send_whatsapp_notification(order.customer_phone, payment_msg)
+
+            html_message = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #4caf50; border-radius: 8px;">
+                <h2 style="color: #4caf50; text-align: center;">Payment Successful!</h2>
+                <p>Hi <strong>{order.customer_name or 'Customer'}</strong>,</p>
+                <p>We received your payment of <strong>NGN {float(order.total_amount):,.2f}</strong> for order <strong>#{order.reference}</strong>.</p>
+                <p>Your order is now being processed for delivery. We will contact you once it ships!</p>
+                <br>
+                <p style="font-size: 12px; color: #777;">Thank you for shopping with Thriftza.</p>
+            </div>
+            """
+
+            try:
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
+                    recipient_list=[order.customer_email],
+                    html_message=html_message,
+                    fail_silently=True
+                )
+            except Exception as e:
+                print(f"Failed to send payment email: {e}")
 
         return Response({'status': 'SUCCESSFUL', 'reference': reference}, status=status.HTTP_200_OK)
 

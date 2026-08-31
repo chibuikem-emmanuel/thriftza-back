@@ -130,6 +130,21 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 
+import os
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = os.getenv("GMAIL_EMAIL", "ve40950@gmail.com")
+EMAIL_HOST_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+
+# Formatted display name for outgoing emails
+DEFAULT_FROM_EMAIL = f"Thriftza <{EMAIL_HOST_USER}>"
+
+
+
 BACHS_SECRET_KEY = os.environ.get('BACHS_SECRET_KEY', 'sk_live_786f7d90_dH3mzbsgDtubcB5ZpS0AfgrB29SRK0Yje_R97TwVzE0')
 
 LANGUAGE_CODE = 'en-us'
