@@ -278,3 +278,17 @@ class AdminOrderListView(APIView):
             'total_orders': len(data),
             'orders': data
         }, status=status.HTTP_200_OK)
+
+
+class AdminOrderDetailView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def delete(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk)
+            order.delete()
+            return Response({'message': 'Order deleted successfully.'}, status=status.HTTP_200_OK)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
