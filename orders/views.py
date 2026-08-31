@@ -283,6 +283,20 @@ class AdminOrderListView(APIView):
 class AdminOrderDetailView(APIView):
     permission_classes = [permissions.AllowAny]
 
+    def patch(self, request, pk):
+        try:
+            order = Order.objects.get(pk=pk)
+            new_status = request.data.get('status')
+            if new_status:
+                order.status = new_status
+                order.save(update_fields=['status'])
+                return Response({'message': f'Status updated to {new_status}.', 'status': order.status}, status=status.HTTP_200_OK)
+            return Response({'error': 'No status provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def delete(self, request, pk):
         try:
             order = Order.objects.get(pk=pk)
