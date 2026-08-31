@@ -1,26 +1,48 @@
+import os
 import threading
-from django.core.mail import send_mail
+import resend
 from django.conf import settings
 
-def send_email_async(subject, message, recipient_list, html_message=None, from_email=None):
-    """Executes email dispatch inside a background thread to prevent RAM spikes."""
-    if not recipient_list:
+# Retrieve API key from Django settings or environment
+RESEND_API_KEY = getattr(settings, 'RESEND_API_KEY', os.getenv('RESEND_API_KEY'))
+resend.api_key = RESEND_API_KEY
+
+
+def _send_resend_email_task(subject, recipient_list, html_message, plain_message=None):
+    """
+    Internal task executing HTTPS POST to Resend API.
+    """
+    if not resend.api_key:
+        print("[EMAIL ERROR] RESEND_API_KEY is not set.")
         return
 
-    sender = from_email or getattr(settings, 'DEFAULT_FROM_EMAIL', getattr(settings, 'EMAIL_HOST_USER', ''))
+    # Use onboarding sender for testing, or set RESEND_FROM_EMAIL in settings
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'Thriftza <onboarding@resend.dev>')
 
-    def _dispatch():
-        try:
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=sender,
-                recipient_list=recipient_list,
-                html_message=html_message,
-                fail_silently=True
-            )
-        except Exception as e:
-            print(f"Async Email Dispatch Failed: {e}")
+    params = {
+        "from": from_email,
+        "to": recipient_list,
+        "subject": subject,
+        "html": html_message,
+    }
 
-    thread = threading.Thread(target=_dispatch, daemon=True)
+    if plain_message:
+        params["text"] = plain_message
+
+    try:
+        response = resend.Emails.send(params)
+        print(f"[EMAIL SUCCESS] Sent to {recipient_list}. Response: {response}")
+    except Exception as e:
+        print(f"[EMAIL FAILURE] Failed sending to {recipient_list}: {str(e)}")
+
+
+def send_email_async(subject, recipient_list, html_message, message=None):
+    """
+    Asynchronously triggers email delivery in a separate thread.
+    """
+    thread = threading.Thread(
+        target=_send_resend_email_task,
+        args=(subject, recipient_list, html_message, message)
+    )
+    thread.daemon = True
     thread.start()

@@ -9,6 +9,7 @@ from rest_framework import status, permissions
 from .models import Order, OrderItem
 from .utils import send_email_async
 
+
 class OrderCheckoutView(APIView):
     permission_classes = [permissions.AllowAny]
 
