@@ -3,11 +3,11 @@ import uuid
 import requests
 from django.conf import settings
 from django.db import transaction
-from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .models import Order, OrderItem
+from .utils import send_email_async
 
 class OrderCheckoutView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -23,7 +23,6 @@ class OrderCheckoutView(APIView):
 
         try:
             with transaction.atomic():
-                # 1. Create Order Record
                 order = Order.objects.create(
                     user=request.user if request.user.is_authenticated else None,
                     customer_name=data.get('customer_name', ''),
@@ -40,7 +39,6 @@ class OrderCheckoutView(APIView):
 
                 order_items_html = ""
 
-                # 2. Create Order Items
                 for item in items_data:
                     product_name = item.get('product_name') or item.get('name') or item.get('title') or f"Product {item.get('id', '')}"
                     unit_price = item.get('unit_price') or item.get('price', 0)
@@ -66,9 +64,9 @@ class OrderCheckoutView(APIView):
                     </tr>
                     """
 
-            # 3. Send Order Confirmation Email
             customer_email = data.get('customer_email', '')
             customer_name = data.get('customer_name', 'Customer')
+            
             try:
                 raw_amount_val = float(data.get('total_amount', 0))
                 formatted_amount = f"{raw_amount_val:,.2f}"
@@ -89,7 +87,6 @@ class OrderCheckoutView(APIView):
                     <h2 style="color: #333;">Order Received</h2>
                     <p>Hi <strong>{customer_name}</strong>,</p>
                     <p>Thank you for your order! Your reference code is <strong>{reference}</strong>.</p>
-                    
                     <h3>Order Details</h3>
                     <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
                         <thead>
@@ -103,31 +100,22 @@ class OrderCheckoutView(APIView):
                             {order_items_html}
                         </tbody>
                     </table>
-
                     <p style="font-size: 16px; text-align: right;"><strong>Total: NGN {formatted_amount}</strong></p>
                     <p style="color: #666; font-size: 14px;"><strong>Shipping Address:</strong> {shipping_address}, {city}, {state}</p>
-                    
-                    <p style="color: #e53935; font-size: 13px;">Please complete your checkout payment to confirm shipment.</p>
                 </div>
                 """
 
-                try:
-                    send_mail(
-                        subject=subject,
-                        message=plain_message,
-                        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
-                        recipient_list=[customer_email],
-                        html_message=html_message,
-                        fail_silently=True
-                    )
-                except Exception as e:
-                    print(f"Failed to send order email: {e}")
+                send_email_async(
+                    subject=subject,
+                    message=plain_message,
+                    recipient_list=[customer_email],
+                    html_message=html_message
+                )
 
-            # 4. Resolve Bachs API Configuration
+            # Gateway Integration
             raw_secret = getattr(settings, 'BACHS_SECRET_KEY', None)
             if not raw_secret:
-                print("ERROR: BACHS_SECRET_KEY is missing or empty in Django settings.")
-                return Response({'error': 'BACHS_SECRET_KEY is missing from environment.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response({'error': 'BACHS_SECRET_KEY missing.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             secret_key = str(raw_secret).strip().strip("'").strip('"')
             raw_base_url = getattr(settings, 'BACHS_BASE_URL', None) or 'https://api.bachs.io/v1'
@@ -143,21 +131,18 @@ class OrderCheckoutView(APIView):
                 "Content-Type": "application/json"
             }
             
-            callback_url = f"{frontend_url}/checkout/verify"
-            payload_amount = f"{raw_amount_val:.2f}"
-
             payload = {
                 "pricing": {
                     "type": "fixed_price",
                     "currency": "NGN",
-                    "amount": payload_amount,
+                    "amount": f"{raw_amount_val:.2f}",
                     "local": {
-                        "amount": payload_amount,
+                        "amount": f"{raw_amount_val:.2f}",
                         "currency": "NGN"
                     }
                 },
                 "reference": reference,
-                "callback_url": callback_url,
+                "callback_url": f"{frontend_url}/checkout/verify",
                 "customer": {
                     "email": customer_email,
                     "name": customer_name,
@@ -172,13 +157,8 @@ class OrderCheckoutView(APIView):
 
             checkout_endpoint = base_url if "checkout" in base_url else f"{base_url}/checkout-sessions"
 
-            bachs_response = requests.post(
-                checkout_endpoint,
-                json=payload,
-                headers=headers,
-                timeout=15
-            )
-
+            bachs_response = requests.post(checkout_endpoint, json=payload, headers=headers, timeout=10)
+            
             res_data = {}
             try:
                 res_data = bachs_response.json()
@@ -206,7 +186,6 @@ class OrderCheckoutView(APIView):
                 return Response({'error': f"Gateway error ({bachs_response.status_code}): {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as e:
-            print("!!! INTERNAL SERVER ERROR EXCEPTION !!!")
             traceback.print_exc()
             if 'order' in locals():
                 order.status = 'FAILED'
@@ -215,7 +194,6 @@ class OrderCheckoutView(APIView):
 
 
 class OrderVerifyView(APIView):
-    """Verifies payment and emails payment receipt confirmation."""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, reference):
@@ -227,7 +205,6 @@ class OrderVerifyView(APIView):
         order.status = 'SUCCESSFUL'
         order.save(update_fields=['status'])
 
-        # Send Payment Confirmation Email
         if order.customer_email:
             subject = f"Payment Confirmed - Order #{order.reference}"
             plain_message = (
@@ -242,29 +219,21 @@ class OrderVerifyView(APIView):
                 <h2 style="color: #4caf50; text-align: center;">Payment Successful!</h2>
                 <p>Hi <strong>{order.customer_name or 'Customer'}</strong>,</p>
                 <p>We received your payment of <strong>NGN {float(order.total_amount):,.2f}</strong> for order <strong>#{order.reference}</strong>.</p>
-                <p>Your order is now being processed for delivery. We will contact you once it ships!</p>
-                <br>
-                <p style="font-size: 12px; color: #777;">Thank you for shopping with Thriftza.</p>
+                <p>Your order is being processed for delivery.</p>
             </div>
             """
 
-            try:
-                send_mail(
-                    subject=subject,
-                    message=plain_message,
-                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', settings.EMAIL_HOST_USER),
-                    recipient_list=[order.customer_email],
-                    html_message=html_message,
-                    fail_silently=True
-                )
-            except Exception as e:
-                print(f"Failed to send payment email: {e}")
+            send_email_async(
+                subject=subject,
+                message=plain_message,
+                recipient_list=[order.customer_email],
+                html_message=html_message
+            )
 
         return Response({'status': 'SUCCESSFUL', 'reference': reference}, status=status.HTTP_200_OK)
 
 
 class AdminOrderListView(APIView):
-    """View for listing all orders in admin dashboard."""
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
